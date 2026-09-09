@@ -1,0 +1,28 @@
+{
+  "status": "source-prepared-not-compiled",
+  "target_architecture": "x86_64",
+  "target_macos": "14.8.9",
+  "upstream_repository": "https://github.com/jonnyoo/glance",
+  "upstream_commit": "295830146e334ec36e2b578aecde511672ab3c31",
+  "required_compiler": "Swift 6.2 / Xcode 26",
+  "proposed_ci_builder": "macos-15-intel, Xcode 26.3",
+  "checks_completed": [
+    "Xcode project parsed and references resolved",
+    "Deployment and signing settings inspected",
+    "Shared scheme XML parsed",
+    "GitHub workflow YAML parsed",
+    "Bash syntax checked",
+    "Modified Swift syntax compared with upstream using a parser; no new parser errors",
+    "Mach-O checker confirmed both original architectures require macOS 26.4"
+  ],
+  "checks_not_completed": [
+    "Xcode compilation and Swift type checking",
+    "Generated-app code-signature verification",
+    "Runtime behavior on macOS 14.8.9 Intel",
+    "Camera and Core ML inference",
+    "Keychain enrollment and face unlock",
+    "Notarization"
+  ],
+  "runtime_note": "Settings may open at launch on Sonoma; manual updates only",
+  "original_dmg_sha256": "82dedb2e26d8cb6226876927a936789245bbb621cbe81f90ecc03db7d80c873a"
+}

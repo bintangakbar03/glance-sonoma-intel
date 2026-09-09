@@ -52,15 +52,19 @@ private extension Scene {
     /// These scene modifiers were introduced in macOS 15. On Sonoma the
     /// Settings window uses the standard launch behavior; AppDelegate still
     /// handles the first-run onboarding gate and menu-bar reopening.
-    @SceneBuilder
     func settingsLaunchBehaviorForCurrentSystem() -> some Scene {
         if #available(macOS 15.0, *) {
-            self
-                .defaultLaunchBehavior(.suppressed)
-                .restorationBehavior(.disabled)
+            return AnyScene(self.settingsLaunchBehavior15)
         } else {
-            self
+            return AnyScene(self)
         }
+    }
+
+    @SceneBuilder
+    private var settingsLaunchBehavior15: some Scene {
+        self
+            .defaultLaunchBehavior(.suppressed)
+            .restorationBehavior(.disabled)
     }
 }
 

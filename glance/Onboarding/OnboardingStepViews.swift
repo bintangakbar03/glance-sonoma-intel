@@ -269,12 +269,20 @@ private struct EnrollmentCloseButton: View {
 
 private struct EnrollmentTooFarChevron: View {
     var body: some View {
-        Image(systemName: "chevron.up.2")
-            .font(.system(size: OnboardingMetrics.enrollTooFarChevronSize, weight: .semibold))
-            .foregroundStyle(.white)
-            .shadow(color: .black.opacity(0.45), radius: 6, y: 1)
-            .symbolEffect(.bounce.up.byLayer, options: .repeating)
-            .accessibilityHidden(true)
+        if #available(macOS 15.0, *) {
+            Image(systemName: "chevron.up.2")
+                .font(.system(size: OnboardingMetrics.enrollTooFarChevronSize, weight: .semibold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.45), radius: 6, y: 1)
+                .symbolEffect(.bounce.up.byLayer, options: .repeating)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: "chevron.up.2")
+                .font(.system(size: OnboardingMetrics.enrollTooFarChevronSize, weight: .semibold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.45), radius: 6, y: 1)
+                .accessibilityHidden(true)
+        }
     }
 }
 

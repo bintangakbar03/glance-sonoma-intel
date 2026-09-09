@@ -74,7 +74,7 @@ struct GeneralSettingsPage: View {
             // Just switched "On space" on and can't fire yet → fire the
             // system prompt. Only on the transition into selection, so
             // toggling the other tiles never re-prompts.
-            SpaceKeyMonitor.log.info("unlockTriggers changed: old=\(String(describing: oldValue), privacy: .public) new=\(String(describing: newValue), privacy: .public) state=\(String(describing: inputMonitoring), privacy: .public)")
+            SpaceKeyMonitor.log.info("unlockTriggers changed: old=\(String(describing: oldValue), privacy: .public) new=\(String(describing: newValue), privacy: .public) state=\(String(describing:[...]
             if newValue.contains(.onSpace), !oldValue.contains(.onSpace), inputMonitoring != .granted {
                 SpaceKeyMonitor.requestInputMonitoringAccess()
                 // Requesting writes a record (initially "off"), which flips
@@ -90,7 +90,7 @@ struct GeneralSettingsPage: View {
             SettingsCaption(text: launchAtLoginError)
         }
         if hasInheritedXcodePermission {
-            SettingsCaption(text: "Running from Xcode — permission checks resolve against Xcode’s grants, not glance’s, so this reading is meaningless. Launch glance.app on its own to see the real state.")
+            SettingsCaption(text: "Running from Xcode — permission checks resolve against Xcode's grants, not glance's, so this reading is meaningless. Launch glance.app on its own to see th[...]
         } else if needsInputMonitoring {
             inputMonitoringNotice()
         }
@@ -144,7 +144,7 @@ struct GeneralSettingsPage: View {
     /// is on record, so that one is a System Settings trip.
     private func inputMonitoringNotice() -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            SettingsCaption(text: "“On space” reads the keyboard directly to see the space key on the lock screen, which needs Accessibility — the same permission glance uses to type your password. Switch glance on under Privacy & Security → Accessibility, then quit and reopen glance.")
+            SettingsCaption(text: ""On space" reads the keyboard directly to see the space key on the lock screen, which needs Accessibility — the same permission glance uses to type your p[...]
             Button("Open Accessibility settings") {
                 // Requesting HID access first covers the rare install that has
                 // no Accessibility grant at all; where Accessibility is the
@@ -226,6 +226,7 @@ struct GeneralSettingsPage: View {
         let id: String
         let name: String
 
+        @MainActor
         init?(_ screen: NSScreen) {
             guard let id = screen.stableDisplayID else { return nil }
             self.id = id

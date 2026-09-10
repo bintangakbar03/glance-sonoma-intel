@@ -2,19 +2,19 @@
 //  KeychainManager.swift
 //  glance
 //
-//  Thin, password-agnostic wrapper around Keychain Services. Knows nothing
-//  about sessions or encryption — just save/read/delete/exists by account,
-//  plus a helper for building a Touch-ID access control.
+//  Thin, password-agnostic wrapper around Keychain Services. The Sonoma
+//  Intel build is intentionally ad-hoc signed, so it uses the legacy/login
+//  Keychain explicitly instead of the Data Protection Keychain. The latter
+//  requires an application identity / Keychain entitlement that an ad-hoc
+//  build does not have.
 //
 
 import Foundation
 import Security
-import LocalAuthentication
 
 enum KeychainError: LocalizedError {
     case itemNotFound
     case unexpectedData
-    case accessControlFailed(String)
     case authenticationFailed
     case osStatus(OSStatus)
 
@@ -24,8 +24,6 @@ enum KeychainError: LocalizedError {
             return "Keychain item not found."
         case .unexpectedData:
             return "Keychain item had an unexpected format."
-        case .accessControlFailed(let msg):
-            return "Couldn't create Keychain access control: \(msg)"
         case .authenticationFailed:
             return "Authentication was cancelled or failed."
         case .osStatus(let status):
@@ -38,33 +36,36 @@ enum KeychainError: LocalizedError {
 enum KeychainManager {
     nonisolated static let service = "com.jonathan.glance"
 
-    /// Attributes-only existence check — never prompts, even for access-controlled items.
-    nonisolated static func exists(account: String) -> Bool {
-        let query: [String: Any] = [
+    /// Every operation opts out of the Data Protection Keychain. That keeps
+    /// this private, ad-hoc-signed Intel build on the user's login Keychain
+    /// and avoids `errSecMissingEntitlement` (-34018).
+    nonisolated private static func baseQuery(account: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecUseDataProtectionKeychain as String: false
         ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        return status != errSecItemNotFound
     }
 
-    /// Reads the raw data stored for `account`. If the item has an access
-    /// control (e.g. Touch ID), pass an `LAContext` to authorize the read —
-    /// the OS presents the prompt during this call.
-    nonisolated static func read(account: String, context: LAContext? = nil) throws -> Data {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        if let context {
-            query[kSecUseAuthenticationContext as String] = context
-        }
+    /// Existence check against the same legacy Keychain used for reads and
+    /// writes. Only a real success counts as an existing item; entitlement,
+    /// interaction, and other errors must never be mistaken for existence.
+    nonisolated static func exists(account: String) -> Bool {
+        var query = baseQuery(account: account)
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+
+    /// Reads raw data from the legacy/login Keychain. Session authentication
+    /// is handled separately by `SecureCredentialManager` with
+    /// LocalAuthentication, so this layer never requests a Keychain ACL.
+    nonisolated static func read(account: String) throws -> Data {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         switch status {
@@ -80,59 +81,26 @@ enum KeychainManager {
         }
     }
 
-    /// Saves `data` for `account`, replacing any existing item. Pass
-    /// `accessControl` (see `makeUserPresenceAccessControl()`) to gate future
-    /// reads behind Touch ID; pass `nil` for an item that's still
-    /// device-local and only readable while unlocked, but has no biometric gate.
-    nonisolated static func save(account: String, data: Data, accessControl: SecAccessControl? = nil) throws {
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+    /// Saves `data` to the legacy/login Keychain, replacing any existing
+    /// value. Do not add `kSecAttrAccessible` or `kSecAttrAccessControl` here:
+    /// those select the Data Protection Keychain path on macOS and bring the
+    /// missing-entitlement failure back for an ad-hoc build.
+    nonisolated static func save(account: String, data: Data) throws {
+        let deleteQuery = baseQuery(account: account)
         SecItemDelete(deleteQuery as CFDictionary)
 
-        var addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-        if let accessControl {
-            addQuery[kSecAttrAccessControl as String] = accessControl
-        } else {
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        }
+        var addQuery = baseQuery(account: account)
+        addQuery[kSecValueData as String] = data
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError.osStatus(status) }
     }
 
     nonisolated static func delete(account: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+        let query = baseQuery(account: account)
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.osStatus(status)
         }
-    }
-
-    /// Access control requiring Touch ID or device password at read time.
-    /// `.userPresence` covers both, with no separate no-hardware handling needed.
-    nonisolated static func makeUserPresenceAccessControl() throws -> SecAccessControl {
-        var accessError: Unmanaged<CFError>?
-        guard let access = SecAccessControlCreateWithFlags(
-            kCFAllocatorDefault,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            .userPresence,
-            &accessError
-        ) else {
-            let msg = (accessError?.takeRetainedValue() as Error?)?.localizedDescription ?? "unknown"
-            throw KeychainError.accessControlFailed(msg)
-        }
-        return access
     }
 }

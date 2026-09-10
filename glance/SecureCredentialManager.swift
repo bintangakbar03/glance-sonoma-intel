@@ -3,15 +3,19 @@
 //  glance
 //
 //  Two-tier password storage on top of KeychainManager:
-//    1. Session key (256-bit AES) — Touch-ID-gated Keychain item. Unwrapped
-//       into memory once per app launch via unlockSession(reason:).
-//    2. Encrypted password blob (AES-GCM) — Keychain item, no biometric gate.
-//       Meaningless without the session key, so it's safe to read at any
-//       time — including from the lock screen, where a Touch ID prompt
-//       can't run because there's no app UI to host it.
+//    1. A random 256-bit AES session key is stored in the user's legacy/login
+//       Keychain. For an existing session key, Glance performs device-owner
+//       authentication (Touch ID or the Mac login password) before loading
+//       the key into memory.
+//    2. The Mac password is AES-GCM encrypted under that session key and the
+//       ciphertext is stored separately in the same legacy/login Keychain.
 //
-//  Touch ID authorizes the session; nothing currently authorizes each
-//  individual unlock beyond that (face recognition will fill that role).
+//  The upstream app can bind the session key directly to a Keychain ACL
+//  because it has a signed application identity. This Sonoma Intel port is
+//  ad-hoc signed, so doing that selects the Data Protection Keychain and
+//  fails with errSecMissingEntitlement (-34018). Authentication is therefore
+//  performed explicitly with LocalAuthentication before the existing key is
+//  released into the app session.
 //
 
 import Foundation
@@ -21,6 +25,7 @@ import LocalAuthentication
 enum SecureCredentialError: LocalizedError {
     case emptyPassword
     case sessionLocked
+    case authenticationRequired
     case encryptionFailed
     case decryptionFailed
     case sessionKeyUnavailable
@@ -30,7 +35,9 @@ enum SecureCredentialError: LocalizedError {
         case .emptyPassword:
             return "Password cannot be empty."
         case .sessionLocked:
-            return "Session is locked. Authenticate with Touch ID before storing or using the password."
+            return "Session is locked. Authenticate before storing or using the password."
+        case .authenticationRequired:
+            return "Session is locked. Authenticate from Password settings before continuing."
         case .encryptionFailed:
             return "Encryption failed."
         case .decryptionFailed:
@@ -42,17 +49,9 @@ enum SecureCredentialError: LocalizedError {
 }
 
 extension Notification.Name {
-    /// Fires whenever the cached session key actually changes — unlocked,
-    /// locked, or wiped by `deletePassword()`. Anything encrypted under that
-    /// key (today: `FaceEnrollmentStore`) observes this instead of being
-    /// told to reload by whichever call site happened to trigger the
-    /// change. That's the fix for a real bug: unlocking via the sidebar's
-    /// session indicator forgot to reload the face store, so face unlock
-    /// silently kept using stale (empty, pre-unlock) data until some other
-    /// page's own `.onAppear` happened to refresh it. A notification from
-    /// the single place the key actually changes can't be forgotten the
-    /// same way a per-caller reload call can — every future unlock/lock
-    /// path, wherever it lives, gets this for free.
+    /// Fires whenever the cached session key changes — unlocked, locked, or
+    /// wiped by `deletePassword()`. Stores encrypted under that key observe
+    /// this instead of relying on individual callers to remember to reload.
     nonisolated static let secureCredentialSessionDidChange = Notification.Name("SecureCredentialManager.sessionDidChange")
 }
 
@@ -64,12 +63,6 @@ enum SecureCredentialManager {
 
     nonisolated private static let sessionLock = NSLock()
     nonisolated(unsafe) private static var _cachedKey: SymmetricKey?
-    /// When the session was last unlocked or actually *used* (a successful
-    /// `readPassword`). `SessionAutoLocker` compares this against the user's
-    /// chosen idle limit — "inactivity" means neither of those has happened
-    /// recently, not merely that time has passed since unlock. Guarded by
-    /// `sessionLock` alongside the key it describes, so the two can never be
-    /// observed out of step with each other.
     nonisolated(unsafe) private static var _lastActivityAt: Date?
 
     nonisolated static var isSessionUnlocked: Bool {
@@ -94,29 +87,20 @@ enum SecureCredentialManager {
         _cachedKey = key
         _lastActivityAt = key == nil ? nil : Date()
         sessionLock.unlock()
-        // Posted after releasing the lock — observers may call straight
-        // back into `isSessionUnlocked` (which re-acquires it), and this
-        // can run on a background thread (`unlockSession` is documented as
-        // blocking, called from `Task.detached`), so a self-deadlock is a
-        // real risk otherwise, not a theoretical one. Guarded on an actual
-        // locked/unlocked transition so a redundant call (none of today's
-        // call sites make one, but nothing enforces that) can't fire a
-        // spurious reload storm.
+
         guard changed else { return }
         NotificationCenter.default.post(name: .secureCredentialSessionDidChange, object: nil)
     }
 
-    /// Resets the idle countdown. Called on each successful use of the
-    /// stored password, so a session in active use never auto-locks.
+    /// Resets the idle countdown after a successful use of the stored
+    /// password, so an actively used session does not auto-lock.
     nonisolated private static func recordActivity() {
         sessionLock.lock()
         if _cachedKey != nil { _lastActivityAt = Date() }
         sessionLock.unlock()
     }
 
-    // MARK: - Generic session-key crypto (shared seam for anything encrypted
-    // under the session key — passwords here, face embeddings in
-    // SecureFaceStore. Requires an unlocked session; does not touch Keychain.)
+    // MARK: - Generic session-key crypto
 
     nonisolated static func encrypt(_ plaintext: Data) throws -> Data {
         guard let key = cachedKey() else { throw SecureCredentialError.sessionLocked }
@@ -145,117 +129,110 @@ enum SecureCredentialManager {
         KeychainManager.exists(account: passwordBlobAccount)
     }
 
-    /// Prompts Touch ID / device password and unwraps the session key into
-    /// memory. On a genuine first run it creates the key and stores it
-    /// Touch-ID-gated for next time — but does not trust that write alone to
-    /// mean "unlocked," and will not create one when the key has gone
-    /// missing while data encrypted under it survives (see the guard below).
-    ///
-    /// The old version cached the key as soon as `SecItemAdd` returned,
-    /// reasoning "there's nothing to authenticate against on the very first
-    /// write." That's true, but doesn't hold up in practice: confirmed via
-    /// logging, `SecItemAdd` returns `errSecSuccess` — and the old code
-    /// cached the key — regardless of whether the user clicked Cancel on
-    /// whatever auth UI macOS happened to show around it. A first attempt at
-    /// fixing this by explicitly calling `LAContext.evaluatePolicy` before
-    /// the write made it worse: bridging that callback-based API to this
-    /// file's synchronous style with a semaphore blocked the calling
-    /// `Task.detached` thread, which starved Swift's cooperative thread pool
-    /// and crashed the process outright.
-    ///
-    /// This is simpler and reuses a mechanism already proven to work
-    /// correctly: after creating the item (silently, ungated, exactly as
-    /// before), immediately read it back via the same
-    /// `KeychainManager.read(account:context:)` call the existing-key branch
-    /// below already uses — genuinely synchronous, no callback bridging
-    /// needed, and its `kSecUseAuthenticationContext` gate is what already
-    /// correctly respects Cancel for that branch. Only a successful read
-    /// caches the key, so the create step being ungated is harmless: nothing
-    /// sensitive exists yet at that point regardless of how it resolves.
-    ///
-    /// Must succeed before `savePassword` or `readPassword` will work.
-    /// Blocking; call from a background task.
-    nonisolated static func unlockSession(reason: String) throws {
-        if cachedKey() != nil { return }
+    /// Device-owner authentication for normal session unlocks. This is kept
+    /// genuinely asynchronous; blocking an async Swift worker with a
+    /// semaphore while waiting for LocalAuthentication can starve the
+    /// cooperative thread pool.
+    nonisolated private static func authenticateDeviceOwner(reason: String) async throws {
+        let context = LAContext()
+        var policyError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
+            if let policyError { throw policyError }
+            throw KeychainError.authenticationFailed
+        }
 
-        // The existence check, not the read, is what decides whether a key
-        // gets created — and that ordering is load-bearing. Cancelling the
-        // prompt on a user-presence item does not report "cancelled": the
-        // ACL fails to authorize and Keychain Services reports
-        // `errSecItemNotFound`, indistinguishable from a key that genuinely
-        // isn't there. Deciding on the read's error would therefore mint a
-        // fresh key every time someone mis-tapped the prompt, and
-        // `KeychainManager.save` is delete-then-add, so the only key that
-        // could decrypt the stored password and every enrolled face would be
-        // destroyed. An attributes-only query needs no ACL evaluation, so it
-        // still answers honestly right after a cancel.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, error in
+                if success {
+                    continuation.resume(returning: ())
+                } else if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(throwing: KeychainError.authenticationFailed)
+                }
+            }
+        }
+    }
+
+    /// Normal unlock path used by Settings. Authentication happens first;
+    /// only then is an existing session key read from the legacy/login
+    /// Keychain and cached in memory. On a genuine empty first run it can
+    /// also create the initial key after authentication.
+    nonisolated static func authenticateAndUnlockSession(reason: String) async throws {
+        if cachedKey() != nil { return }
+        try await authenticateDeviceOwner(reason: reason)
+
         if KeychainManager.exists(account: sessionKeyAccount) {
-            let context = LAContext()
-            context.localizedReason = reason
-            let data = try KeychainManager.read(account: sessionKeyAccount, context: context)
+            let data = try KeychainManager.read(account: sessionKeyAccount)
             setCachedKey(SymmetricKey(data: data))
             return
         }
 
-        // No key item at all. Creating one is still destructive if something
-        // is already encrypted under a previous key — the orphaned state a
-        // re-signed development build produces. Refuse rather than mint a
-        // key that silently renders that data unreadable forever; the error
-        // names the only real way out.
+        try createInitialSessionKey()
+    }
+
+    /// Bootstrap path retained for the first-run onboarding flow, whose
+    /// existing call site is synchronous. It is deliberately allowed only
+    /// when no session key exists yet. Once a key has been created, a locked
+    /// session cannot be reopened through this method; callers must use
+    /// `authenticateAndUnlockSession(reason:)` instead.
+    ///
+    /// This lets the first-run password screen create its encryption key
+    /// without reintroducing the Data Protection Keychain entitlement error,
+    /// while preventing later enrollment/debug paths from bypassing the
+    /// session authentication gate.
+    nonisolated static func unlockSession(reason: String) throws {
+        if cachedKey() != nil { return }
+
+        if KeychainManager.exists(account: sessionKeyAccount) {
+            throw SecureCredentialError.authenticationRequired
+        }
+
+        try createInitialSessionKey()
+    }
+
+    /// Creates the first session key only when no encrypted payload survives
+    /// from an older key. Refusing the orphaned state prevents silently
+    /// replacing the only key capable of decrypting an existing password or
+    /// enrolled face store.
+    nonisolated private static func createInitialSessionKey() throws {
         guard !hasSessionEncryptedData else {
             throw SecureCredentialError.sessionKeyUnavailable
         }
 
         let key = SymmetricKey(size: .bits256)
-        let access = try KeychainManager.makeUserPresenceAccessControl()
         try KeychainManager.save(
             account: sessionKeyAccount,
-            data: key.withUnsafeBytes { Data($0) },
-            accessControl: access
+            data: key.withUnsafeBytes { Data($0) }
         )
-
-        // Read back through the same gated path rather than trusting the
-        // write: `SecItemAdd` returns success regardless of how any auth UI
-        // macOS showed around it resolved, so only a real read proves the
-        // user actually authenticated.
-        let readBackContext = LAContext()
-        readBackContext.localizedReason = reason
-        let data = try KeychainManager.read(account: sessionKeyAccount, context: readBackContext)
-        setCachedKey(SymmetricKey(data: data))
+        setCachedKey(key)
     }
 
     /// Whether anything on this Mac is currently encrypted under the session
-    /// key. Both stores are checked without needing the key itself — a
-    /// Keychain attribute query and a file-existence check — so this stays
-    /// answerable precisely when the key can't be read.
+    /// key. This remains answerable while the session itself is locked.
     nonisolated static var hasSessionEncryptedData: Bool {
         KeychainManager.exists(account: passwordBlobAccount) || SecureFaceStore.exists
     }
 
-    /// Clears the cached session key. Next save/read requires Touch ID again.
+    /// Clears the in-memory key. Reopening an existing session requires
+    /// device-owner authentication again.
     nonisolated static func lockSession() {
         setCachedKey(nil)
     }
 
-    /// Encrypts and stores `passwordBytes`. Requires an unlocked session —
-    /// call `unlockSession(reason:)` first. Blocking; call from a background task.
+    /// Encrypts and stores `passwordBytes`. Requires an unlocked session.
     nonisolated static func savePassword(_ passwordBytes: Data) throws {
         guard !passwordBytes.isEmpty else { throw SecureCredentialError.emptyPassword }
         let combined = try encrypt(passwordBytes)
         try KeychainManager.save(account: passwordBlobAccount, data: combined)
     }
 
-    /// Decrypts and returns the stored password. Requires an unlocked
-    /// session (no separate Touch ID prompt here — the blob itself isn't
-    /// gated, only the session key was, at unlock time).
-    ///
-    /// Returns raw bytes — the caller MUST zero them via `.resetBytes(in:)`
-    /// after use. Blocking; call from a background task.
+    /// Decrypts and returns the stored password. The caller must zero the
+    /// returned buffer after use.
     nonisolated static func readPassword() throws -> Data {
         guard cachedKey() != nil else { throw SecureCredentialError.sessionLocked }
         let ciphertext = try KeychainManager.read(account: passwordBlobAccount)
         let plaintext = try decrypt(ciphertext)
-        // Only on success: a failed read shouldn't extend the idle window.
         recordActivity()
         return plaintext
     }

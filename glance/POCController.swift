@@ -36,15 +36,20 @@ final class POCController {
         isSessionUnlocked = SecureCredentialManager.isSessionUnlocked
     }
 
-    // MARK: - Session (Touch ID gate)
+    // MARK: - Session authentication
 
     /// Must succeed before `savePassword()` or `injectStoredPassword()` will do anything.
+    ///
+    /// The Sonoma Intel build cannot attach a user-presence ACL directly to
+    /// its Keychain item because the downloadable app is ad-hoc signed. The
+    /// session therefore performs device-owner authentication explicitly,
+    /// then loads the encrypted session key from the user's login Keychain.
     func unlockSession() async {
         sessionError = nil
         do {
-            try await Task.detached(priority: .userInitiated) {
-                try SecureCredentialManager.unlockSession(reason: "Authenticate to set up or use glance")
-            }.value
+            try await SecureCredentialManager.authenticateAndUnlockSession(
+                reason: "Authenticate to set up or use Glance"
+            )
             isSessionUnlocked = true
         } catch {
             isSessionUnlocked = false
@@ -60,7 +65,7 @@ final class POCController {
     // MARK: - Setup flow
 
     /// Encrypts and stores `passwordInput`. Requires the session to already
-    /// be unlocked (Touch ID happens in `unlockSession()`, not here).
+    /// be unlocked (authentication happens in `unlockSession()`, not here).
     func savePassword() async {
         guard !passwordInput.isEmpty else {
             statusMessage = "Enter a password first."
@@ -96,7 +101,7 @@ final class POCController {
             return
         }
         guard SecureCredentialManager.isSessionUnlocked else {
-            statusMessage = "Session locked — authenticate with Touch ID first."
+            statusMessage = "Session locked — authenticate from Password settings first."
             return
         }
 

@@ -156,6 +156,7 @@ private struct UnlockGlyphView: View {
 struct EnrollStepView: View {
     let controller: OnboardingController
     @Environment(\.notchPanelStyle) private var style
+    @State private var errorDetails: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -176,6 +177,14 @@ struct EnrollStepView: View {
             }
         }
         .background(GlanceTheme.panel)
+        .alert("Face enrollment", isPresented: Binding(
+            get: { errorDetails != nil },
+            set: { if !$0 { errorDetails = nil } }
+        )) {
+            Button("OK", role: .cancel) { errorDetails = nil }
+        } message: {
+            Text(errorDetails ?? "")
+        }
     }
 
     private var showsCloseButton: Bool {
@@ -225,24 +234,29 @@ struct EnrollStepView: View {
     }
 
     private var instructionLabel: some View {
-        Text(controller.enrollmentInstruction)
-            .font(GlanceTheme.Font.instruction)
-            .foregroundStyle(.white)
-            .multilineTextAlignment(.center)
-            .lineLimit(2)
-            .minimumScaleFactor(0.8)
-            .id(controller.enrollmentInstruction)
-            .transition(.opacity)
-            .animation(.easeInOut(duration: 0.2), value: controller.enrollmentInstruction)
-            .opacity(controller.guideVisible ? 1 : 0)
-            .animation(
-                .easeInOut(
-                    duration: controller.guideVisible
-                        ? OnboardingMetrics.enrollInstructionFadeIn
-                        : OnboardingMetrics.enrollInstructionFadeOut
-                ),
-                value: controller.guideVisible
-            )
+        VStack(spacing: 6) {
+            Text(controller.enrollmentInstruction)
+                .font(GlanceTheme.Font.instruction)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
+            if let detail = controller.enrollmentErrorDetails {
+                Button("Show details") { errorDetails = detail }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(GlanceTheme.accent)
+            }
+        }
+        .opacity(controller.enrollmentComplete && !controller.guideVisible ? 0 : 1)
+        .animation(
+            .easeInOut(
+                duration: controller.guideVisible
+                    ? OnboardingMetrics.enrollInstructionFadeIn
+                    : OnboardingMetrics.enrollInstructionFadeOut
+            ),
+            value: controller.guideVisible
+        )
     }
 }
 

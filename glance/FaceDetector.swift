@@ -67,7 +67,10 @@ nonisolated enum FaceDetector {
         let landmarksRequest = VNDetectFaceLandmarksRequest()
         qualityRequest.inputFaceObservations = faceObservations
         landmarksRequest.inputFaceObservations = faceObservations
-        try handler.perform([qualityRequest, landmarksRequest])
+        try handler.perform([landmarksRequest])
+        // Capture quality is optional throughout the pipeline. Failure of
+        // this auxiliary request must not discard successfully found faces.
+        try? handler.perform([qualityRequest])
 
         let qualityResults = qualityRequest.results ?? []
         let landmarkResults = landmarksRequest.results ?? []
@@ -75,14 +78,15 @@ nonisolated enum FaceDetector {
 
         return faceObservations.enumerated().map { index, observation in
             let pixelRect = convertToImageSpace(observation.boundingBox, imageSize: imageSize)
+            let landmarkObservation = landmarkResults.indices.contains(index) ? landmarkResults[index] : nil
             return DetectedFace(
                 boundingBox: pixelRect,
                 normalizedBoundingBox: observation.boundingBox,
                 quality: qualityResults.indices.contains(index) ? qualityResults[index].faceCaptureQuality : nil,
-                yaw: observation.yaw?.floatValue,
-                roll: observation.roll?.floatValue,
-                pitch: observation.pitch?.floatValue,
-                landmarks: landmarkResults.indices.contains(index) ? landmarkResults[index].landmarks : nil,
+                yaw: (landmarkObservation?.yaw ?? observation.yaw)?.floatValue,
+                roll: (landmarkObservation?.roll ?? observation.roll)?.floatValue,
+                pitch: (landmarkObservation?.pitch ?? observation.pitch)?.floatValue,
+                landmarks: landmarkObservation?.landmarks,
                 imageSize: imageSize
             )
         }

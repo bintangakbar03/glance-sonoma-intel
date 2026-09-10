@@ -8,8 +8,8 @@
 //  (see FaceAligner) — unlike VisionFeaturePrintEmbedder, this model was
 //  never trained on loose crops and its accuracy depends on alignment.
 //
-//  Runs entirely on-device via Core ML, preferring the Neural Engine on
-//  Apple Silicon (`computeUnits = .all`).
+//  Runs entirely on-device via Core ML. Intel uses CPU inference; other
+//  architectures let Core ML choose the available compute devices.
 //
 
 import CoreML
@@ -58,13 +58,13 @@ nonisolated final class ArcFaceEmbedder: FaceEmbedder, @unchecked Sendable {
     /// failing lazily on first use — callers (see `FaceRecognitionPipeline`)
     /// treat construction failure as "ArcFace isn't available yet" and fall
     /// back to `VisionFeaturePrintEmbedder`.
-    init() throws {
-        guard let modelURL = Self.locateModel() else {
+    init(modelURL: URL? = nil) throws {
+        guard let modelURL = modelURL ?? Self.locateModel() else {
             throw ArcFaceEmbedderError.modelNotFound
         }
 
         let configuration = MLModelConfiguration()
-        configuration.computeUnits = .all
+        configuration.computeUnits = RecognitionRuntime.computeUnits
 
         do {
             model = try MLModel(contentsOf: modelURL, configuration: configuration)

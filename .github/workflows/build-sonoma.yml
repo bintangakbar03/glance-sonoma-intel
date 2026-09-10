@@ -52,5 +52,6 @@ jobs:
           path: |
             build/sonoma/run.*/build.log
             build/sonoma/run.*/toolchain.txt
+            build/sonoma/run.*/recognition-smoke.log
           if-no-files-found: ignore
           retention-days: 14

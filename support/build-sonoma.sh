@@ -50,6 +50,8 @@ app_path="$run_dir/DerivedData/Build/Products/Release/glance.app"
 python3 "$repo_dir/support/verify-built-app.py" "$app_path" "$target_version" \
     | tee "$run_dir/verification.json"
 codesign --verify --deep --strict --verbose=2 "$app_path"
+bash "$repo_dir/support/test-recognition.sh" "$app_path" \
+    2>&1 | tee "$run_dir/recognition-smoke.log"
 
 stage_dir="$run_dir/dmg-content"
 mkdir -p "$stage_dir"
@@ -71,6 +73,7 @@ hdiutil create -volname 'Glance Sonoma' -srcfolder "$stage_dir" \
 cp "$run_dir/$dmg_name" "$repo_dir/build/artifacts/$dmg_name"
 cp "$run_dir/verification.json" "$repo_dir/build/artifacts/verification.json"
 cp "$run_dir/toolchain.txt" "$repo_dir/build/artifacts/toolchain.txt"
+cp "$run_dir/recognition-smoke.log" "$repo_dir/build/artifacts/recognition-smoke.log"
 shasum -a 256 "$repo_dir/build/artifacts/$dmg_name"
 echo "Kompilasi dan pemeriksaan paket selesai. Pengujian di macOS Sonoma masih diperlukan."
 echo "DMG: $repo_dir/build/artifacts/$dmg_name"

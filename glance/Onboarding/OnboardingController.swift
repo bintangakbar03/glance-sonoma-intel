@@ -423,6 +423,8 @@ final class OnboardingController {
     private(set) var currentPoseIndex = 0
     private(set) var capturedForCurrentPose = 0
     private(set) var faceDetected = false
+    private(set) var enrollmentError: String?
+    private(set) var enrollmentStatus = "Starting camera…"
     private(set) var currentYaw: Float?
     private(set) var currentPitch: Float?
     /// Whether the last-seen face read as too small (too far from the
@@ -492,14 +494,20 @@ final class OnboardingController {
     /// completion line while the checkmark plays.
     var enrollmentInstruction: String {
         if enrollmentComplete { return "Face captured" }
+        if camera.errorMessage != nil { return "Camera unavailable" }
+        if camera.frameErrorMessage != nil { return "Camera image could not be processed" }
+        if enrollmentError != nil { return "Face processing needs attention" }
         if isTooFar { return "Bring your face closer" }
-        return currentPose?.instruction ?? ""
+        return enrollmentStatus
     }
+
+    var enrollmentErrorDetails: String? { camera.errorMessage ?? camera.frameErrorMessage ?? enrollmentError }
 
     private enum EnrollFrameOutcome: Sendable {
         case noFace
         case tooFar
         case ready(FaceRecognitionResult)
+        case failed(String)
     }
 
     var overallEnrollmentProgress: Double {
@@ -645,6 +653,11 @@ final class OnboardingController {
         capturedPoses = []
         matchStreak = 0
         poseHoldStartedAt = nil
+        faceDetected = false
+        currentYaw = nil
+        currentPitch = nil
+        enrollmentError = nil
+        enrollmentStatus = "Starting camera…"
         isTooFar = false
         enrollmentComplete = false
         guideVisible = false
@@ -655,6 +668,10 @@ final class OnboardingController {
 
     private func beginEnrollment() {
         guard step == .enroll else { return }
+        enrollmentError = pipeline.usingFallbackEmbedder
+            ? "The ArcFace recognition model could not load. " + (pipeline.fallbackReason ?? "Unknown model error.")
+            : nil
+        enrollmentStatus = "Look straight at the camera"
         guideVisible = true
         cameraPreviewVisible = true
         showCheckmark = false
@@ -736,6 +753,9 @@ final class OnboardingController {
     private func processEnrollFrame() async {
         guard step == .enroll, !enrollmentComplete, !isProcessingFrame,
               let cameraFrame = camera.currentFrame, let pose = currentPose else { return }
+        // The generic feature-print fallback cannot produce the aligned
+        // ArcFace samples enrollment requires. Surface its load failure.
+        guard !pipeline.usingFallbackEmbedder else { return }
         isProcessingFrame = true
         defer { isProcessingFrame = false }
 
@@ -743,6 +763,7 @@ final class OnboardingController {
         let minimumWidth = enrollmentMinimumFaceWidth
         let image = cameraFrame.image
         let outcome = await Task.detached(priority: .userInitiated) {
+            var stage = "Face detection"
             do {
                 let faces = try FaceDetector.detectFaces(in: image)
                 guard let face = FaceRecognitionPipeline.largestFace(in: faces) else {
@@ -751,14 +772,29 @@ final class OnboardingController {
                 if Float(face.normalizedBoundingBox.width) < minimumWidth {
                     return EnrollFrameOutcome.tooFar
                 }
+                stage = "Face encoding"
                 return EnrollFrameOutcome.ready(try pipeline.recognize(face, in: image))
             } catch {
-                return EnrollFrameOutcome.noFace
+                let detail = error as NSError
+                return EnrollFrameOutcome.failed("\(stage) failed: \(detail.localizedDescription) (\(detail.domain), code \(detail.code))")
             }
         }.value
 
+        // Do not apply a frame after leaving its capture step.
+        guard step == .enroll, !enrollmentComplete, currentPose == pose else { return }
+        enrollmentError = nil
         switch outcome {
+        case .failed(let detail):
+            enrollmentError = detail
+            faceDetected = false
+            currentYaw = nil
+            currentPitch = nil
+            matchStreak = 0
+            poseHoldStartedAt = nil
+            isTooFar = false
+            return
         case .noFace:
+            enrollmentStatus = "Looking for your face"
             faceDetected = false
             currentYaw = nil
             currentPitch = nil
@@ -776,6 +812,8 @@ final class OnboardingController {
             return
         case .ready(let result):
             guard let yaw = result.face.yaw, let pitch = result.face.pitch else {
+                enrollmentStatus = "Face found. Look straight at the camera"
+                enrollmentError = "A face was detected, but Vision did not return the head angles needed for enrollment. Try facing the camera in even lighting. Missing values: yaw=\(result.face.yaw == nil), pitch=\(result.face.pitch == nil)."
                 faceDetected = true
                 currentYaw = nil
                 currentPitch = nil
@@ -788,6 +826,7 @@ final class OnboardingController {
             currentYaw = yaw
             currentPitch = pitch
             isTooFar = false
+            enrollmentStatus = pose.instruction
             await processMatchedEnrollFrame(result, yaw: yaw, pitch: pitch, pose: pose)
         }
     }
@@ -817,6 +856,11 @@ final class OnboardingController {
         let widened = ContinuousClock.now - poseStartedAt > stallTimeout
         let poseOK = poseMatches(yaw: yaw, pitch: pitch, pose: pose, widened: widened)
         guard qualityOK, alignmentOK, !isTooFar, poseOK else {
+            if !qualityOK {
+                enrollmentStatus = "Use brighter, even lighting"
+            } else if !alignmentOK {
+                enrollmentStatus = "Keep your eyes and mouth clearly visible"
+            }
             matchStreak = 0
             poseHoldStartedAt = nil
             return
@@ -825,6 +869,7 @@ final class OnboardingController {
         if poseHoldStartedAt == nil {
             poseHoldStartedAt = .now
         }
+        enrollmentStatus = "Hold still…"
         guard ContinuousClock.now - poseHoldStartedAt! >= poseHoldDuration else { return }
 
         matchStreak += 1

@@ -46,8 +46,8 @@ enum OnboardingMetrics {
     static let pillPermissionsHeight: CGFloat = 245
     static let notchPreSetupHeight: CGFloat = 220
     static let pillPreSetupHeight: CGFloat = 220
-    static let notchEnrollHeight: CGFloat = 344
-    static let pillEnrollHeight: CGFloat = 350
+    static let notchEnrollHeight: CGFloat = 374
+    static let pillEnrollHeight: CGFloat = 380
     static let notchNameHeight: CGFloat = 230
     static let pillNameHeight: CGFloat = 230
     static let notchPasswordHeight: CGFloat = 260

@@ -35,6 +35,7 @@ final class CameraManager: NSObject {
     private(set) var isRunning: Bool = false
     private(set) var currentFrame: CameraFrame?
     private(set) var errorMessage: String?
+    private(set) var frameErrorMessage: String?
 
     /// Exposed read-only so `CameraPreviewView` can attach an
     /// `AVCaptureVideoPreviewLayer` to the same session this manager drives.
@@ -71,6 +72,7 @@ final class CameraManager: NSObject {
         }
 
         errorMessage = nil
+        frameErrorMessage = nil
         configureSessionIfNeeded()
         reconcileDeviceIfNeeded()
 
@@ -186,7 +188,12 @@ final class CameraManager: NSObject {
     }
 
     fileprivate func publish(frame: CameraFrame) {
+        frameErrorMessage = nil
         currentFrame = frame
+    }
+
+    fileprivate func reportFrameRenderingFailure() {
+        frameErrorMessage = "The camera preview is running, but its frames could not be converted for face detection. Quit Glance and reopen it."
     }
 
     /// Renders a native-resolution crop of `imageRect` (in `frame.image`'s
@@ -238,14 +245,14 @@ final class CameraManager: NSObject {
     /// isolated by default, which `renderCrop` (deliberately `nonisolated`
     /// so it can run from the background tasks that already do Vision/
     /// recognition work) can't touch.
-    private nonisolated static let cropRenderContext = CIContext()
+    private nonisolated static let cropRenderContext = RecognitionRuntime.makeImageContext()
 
     /// Sample-buffer callbacks arrive on `sessionQueue`, off the main actor.
     /// This tiny delegate does the CGImage conversion there, then hops back
     /// to the MainActor-isolated manager to publish the result.
     private final class FramePublisher: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         weak var owner: CameraManager?
-        private let ciContext = CIContext()
+        private let ciContext = RecognitionRuntime.makeImageContext()
         /// Detection/embedding only ever need a modest-resolution frame —
         /// running Vision on the full sensor resolution (often 1080p+) is
         /// pure waste. This only affects the `image` half of `CameraFrame`
@@ -270,7 +277,12 @@ final class CameraManager: NSObject {
                 let scale = maxLongEdge / longEdge
                 ciImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             }
-            guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+            guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+                Task { @MainActor [weak owner] in
+                    owner?.reportFrameRenderingFailure()
+                }
+                return
+            }
 
             nextFrameID &+= 1
             let frame = CameraFrame(

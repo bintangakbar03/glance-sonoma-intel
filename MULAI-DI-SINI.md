@@ -11,7 +11,7 @@ Paket ini menggunakan kode sumber resmi [jonnyoo/glance](https://github.com/jonn
 ## Perubahan yang disiapkan
 
 - Target kompilasi diubah menjadi macOS **14.8.9**, khusus Intel **x86_64**.
-- Pengaturan jendela `defaultLaunchBehavior` dan `restorationBehavior` digunakan hanya pada macOS 15+. Pada Sonoma digunakan perilaku jendela standar; jendela Settings bisa muncul saat aplikasi dibuka. Pemulihan jendela dimatikan melalui AppKit.
+- Pengaturan jendela khusus macOS 15 (`defaultLaunchBehavior` dan `restorationBehavior`) tidak digunakan pada port ini. Jendela Settings memakai perilaku standar Sonoma dan bisa muncul saat aplikasi dibuka. Pemulihan jendela dimatikan melalui AppKit.
 - Animasi pergantian ikon kunci memakai pengganti yang tersedia di Sonoma.
 - Ikon aplikasi menggunakan asset catalog biasa dari gambar ikon bawaan.
 - Pembaruan otomatis upstream dinonaktifkan dan dependensi Sparkle dilepas, agar build Sonoma tidak diganti oleh aplikasi dengan kebutuhan macOS yang berbeda.

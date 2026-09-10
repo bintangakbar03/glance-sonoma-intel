@@ -20,10 +20,9 @@ struct glanceApp: App {
         settingsWindow
     }
 
-    /// On macOS 15+, Settings is suppressed on launch and after quit.
-    /// Sonoma uses the standard launch behavior. The `openWindow` action
-    /// is captured here, not in the window's `onAppear`, because the window may never have appeared
-    /// before the menu bar item (or first-run completion) needs to open it.
+    /// Sonoma uses the standard Settings window launch behavior.
+    /// Capture `openWindow` here as well as in `onAppear`, so the menu bar
+    /// and onboarding can reopen Settings even after its window closes.
     private var settingsWindow: some Scene {
         let open = openWindow
         let delegate = appDelegate
@@ -44,23 +43,8 @@ struct glanceApp: App {
         // the window is made non-resizable there, so nothing re-derives it.
         .windowStyle(.hiddenTitleBar)
         .defaultPosition(.center)
-        .settingsLaunchBehaviorForCurrentSystem()
-    }
-}
-
-private extension Scene {
-    /// These scene modifiers were introduced in macOS 15. On Sonoma the
-    /// Settings window uses the standard launch behavior; AppDelegate still
-    /// handles the first-run onboarding gate and menu-bar reopening.
-    @SceneBuilder
-    func settingsLaunchBehaviorForCurrentSystem() -> some Scene {
-        if #available(macOS 15.0, *) {
-            self
-                .defaultLaunchBehavior(.suppressed)
-                .restorationBehavior(.disabled)
-        } else {
-            self
-        }
+        // This port targets Sonoma. Keep macOS 15 scene modifiers out of
+        // the scene; WindowConfiguringView disables restoration via AppKit.
     }
 }
 

@@ -34,7 +34,7 @@ Alur sudah disiapkan di `.github/workflows/build-sonoma.yml`. Untuk menjalankann
 4. Jika kompilasi berhasil, unduh artifact **Glance-Sonoma-Intel-macOS14.8.9**. Isinya mencakup DMG dan laporan pemeriksaan paket.
 5. Jika gagal, unduh **Glance-Sonoma-build-logs**. Log tersebut diperlukan untuk memperbaiki error kompilasi; source yang belum berhasil dikompilasi tidak boleh dianggap sudah kompatibel.
 
-Workflow dijalankan secara manual dan menggunakan kuota GitHub Actions pada akun pemilik repository. [Dokumentasi runner GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Workflow dapat dijalankan secara manual, dan berjalan otomatis saat perubahan kode atau konfigurasi build di-push ke `main`. Build memperlakukan warning Swift sebagai error dan menjalankan tes liveness yang sudah tersedia sebelum mengunggah DMG. Workflow menggunakan kuota GitHub Actions pada akun pemilik repository. [Dokumentasi runner GitHub](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 ### Melalui Mac lain yang memiliki Xcode 26
 

@@ -34,6 +34,7 @@ xcodebuild \
     -derivedDataPath "$run_dir/DerivedData" \
     ARCHS=x86_64 \
     ONLY_ACTIVE_ARCH=NO \
+    SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
     MACOSX_DEPLOYMENT_TARGET="$target_version" \
     DEVELOPMENT_TEAM= \
     CODE_SIGN_STYLE=Manual \

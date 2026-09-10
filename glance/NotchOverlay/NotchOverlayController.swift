@@ -258,7 +258,7 @@ final class NotchOverlayController {
     /// on the first call ever; every later call already has a real prior
     /// frame (even a closed one left over from a previous `hide()`) to
     /// animate from, so `completion` runs synchronously as before.
-    private func primeWindowIfNeeded(_ completion: @escaping () -> Void) {
+    private func primeWindowIfNeeded(_ completion: @escaping @MainActor @Sendable () -> Void) {
         guard !hasPrimedWindow else {
             completion()
             return
@@ -268,7 +268,9 @@ final class NotchOverlayController {
         phase = .closed
         windowController.show()
         windowController.displaySynchronously()
-        DispatchQueue.main.async(execute: completion)
+        DispatchQueue.main.async {
+            completion()
+        }
     }
 
     // MARK: - One-shot mode (onboarding, Face Lab preview)

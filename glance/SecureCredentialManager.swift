@@ -53,7 +53,7 @@ extension Notification.Name {
     /// the single place the key actually changes can't be forgotten the
     /// same way a per-caller reload call can — every future unlock/lock
     /// path, wherever it lives, gets this for free.
-    static let secureCredentialSessionDidChange = Notification.Name("SecureCredentialManager.sessionDidChange")
+    nonisolated static let secureCredentialSessionDidChange = Notification.Name("SecureCredentialManager.sessionDidChange")
 }
 
 enum SecureCredentialManager {

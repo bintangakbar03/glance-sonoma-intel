@@ -35,7 +35,7 @@ import CoreGraphics
 /// (`LivenessFeatures.swift`, which does need Vision) from a real camera
 /// frame, or built directly from synthetic data by
 /// `tools/liveness_selftest.swift` — this struct itself has no idea which.
-struct LivenessFrame {
+nonisolated struct LivenessFrame {
     let timestamp: Date
     /// Every landmark point Vision found this frame, tagged by region —
     /// see `LandmarkGeometry.allPoints`.
